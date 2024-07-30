@@ -3,13 +3,12 @@ import time
 import http.client
 import urllib
 from datetime import datetime, timezone, timedelta
-from dotenv import load_dotenv
 import os
 import pickle
 from concurrent.futures import ThreadPoolExecutor
 from colorama import init, Fore, Style
-import json
 import logging
+from config_loader import load_configuration
 
 # Initialize colorama and logging
 init(autoreset=True)
@@ -38,7 +37,7 @@ handler.setFormatter(formatter)
 logging.basicConfig(level=logging.INFO, handlers=[handler])
 
 # Load environment variables from .env file
-load_dotenv()
+config = load_configuration()
 
 # Check if all necessary environment variables are loaded
 required_env_vars = ['PUSHOVER_APP_TOKEN', 'PUSHOVER_USER_KEY', 'REDDIT_CLIENT_ID', 'REDDIT_CLIENT_SECRET', 'REDDIT_USER_AGENT', 'REDDIT_USERNAME', 'REDDIT_PASSWORD']
@@ -64,8 +63,8 @@ class RedditMonitor:
             conn = http.client.HTTPSConnection("api.pushover.net:443")
             conn.request("POST", "/1/messages.json",
                          urllib.parse.urlencode({
-                             "token": os.getenv('PUSHOVER_APP_TOKEN'),
-                             "user": os.getenv('PUSHOVER_USER_KEY'),
+                             "token": config['PUSHOVER_APP_TOKEN'],
+                             "user": config['PUSHOVER_USER_KEY'],
                              "message": message,
                          }), {"Content-type": "application/x-www-form-urlencoded"})
             response = conn.getresponse()
@@ -143,18 +142,14 @@ class RedditMonitor:
 
 def authenticate_reddit():
     logging.info("Authenticating Reddit...")
-    return praw.Reddit(client_id=os.getenv('REDDIT_CLIENT_ID'),
-                       client_secret=os.getenv('REDDIT_CLIENT_SECRET'),
-                       user_agent=os.getenv('REDDIT_USER_AGENT'),
-                       username=os.getenv('REDDIT_USERNAME'),
-                       password=os.getenv('REDDIT_PASSWORD'))
+    return praw.Reddit(client_id=config['REDDIT_CLIENT_ID'],
+                       client_secret=config['REDDIT_CLIENT_SECRET'],
+                       user_agent=config['REDDIT_USER_AGENT'],
+                       username=config['REDDIT_USERNAME'],
+                       password=config['REDDIT_PASSWORD'])
 
 def main():
     reddit = authenticate_reddit()  # Authenticate Reddit once
-
-    # Load parameters from config.json
-    with open('search.json', 'r') as config_file:
-        config = json.load(config_file)
 
     subreddits_to_search = config.get('subreddits_to_search', [])
     iteration_time_minutes = config.get('iteration_time_minutes', 5)
@@ -162,20 +157,16 @@ def main():
     loopTime = 0
     while True:
         with ThreadPoolExecutor() as executor:
-            # Use list comprehension to store futures and handle exceptions separately
             futures = [executor.submit(RedditMonitor(reddit, **params).search_reddit_for_keywords) for params in subreddits_to_search]
 
-            # Handle exceptions from each future separately
             for future in futures:
                 try:
                     future.result()
                 except Exception as e:
                     error_message = f"Error during subreddit search: {e}"
                     logging.error(error_message)
-                    # Send an error notification for each subreddit search failure
                     RedditMonitor(reddit).send_error_notification(error_message)
 
-        # Add a delay before the next iteration
         iterationTime = iteration_time_minutes * 60  # seconds
         logging.info(f"Waiting {iteration_time_minutes} minutes before the next iteration...")
         logging.info(f"We have looped {loopTime} times")
